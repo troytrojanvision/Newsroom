@@ -1,0 +1,963 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<meta name="theme-color" content="#170710" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f1efe3" media="(prefers-color-scheme: light)">
+<title>Troy TrojanVision — Newsroom</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* ============ EDIT ZONE: sheet sources & quick links ============ */
+  /* If you republish a sheet, its URL changes — swap it in below.    */
+</style>
+</head>
+<body>
+
+<!-- ======================================================================
+  TROY TROJANVISION — NEWSROOM DASHBOARD
+  Single-file, no build step. Host anywhere (GitHub Pages, school server,
+  Google Sites "Embed > By URL" pointing at wherever this file lives).
+
+  Data sources (published Google Sheets, output=csv):
+    - Anchor schedule
+    - Upload deadlines ("Blog Posts")
+    - Storyboard
+  Everything else (Quick Links, contact info) is edited directly below in
+  the CONFIG block — search for "EDIT ME".
+====================================================================== -->
+
+<div id="app">
+  <div class="boot">
+    <div class="boot-mark">TVT</div>
+    <div class="boot-text">LOADING RUNDOWN…</div>
+  </div>
+</div>
+
+<script>
+/* ============================== CONFIG ============================== */
+/* EDIT ME: swap in your published-CSV links any time a sheet changes. */
+const CONFIG = {
+  stationName: "TROY TROJANVISION",
+  tagline: "Troy University Television — Student Newsroom",
+  bannerUrl: "https://troytrojanvision.github.io/Newsroom/TVBanner.jpg",
+  logoUrl: "https://troytrojanvision.github.io/Newsroom/TTVLogo.png",
+  sheets: {
+    anchors: "https://docs.google.com/spreadsheets/d/e/2PACX-1vSwObb3pyhHBXs2az4oWYup9-K2StEtxFulZKepYMlFHmMoZp23BxfW2LrUG0FnPr44hHJhDwT0_Jxe/pub?gid=0&single=true&output=csv",
+    deadlines: "https://docs.google.com/spreadsheets/d/e/2PACX-1vRWD-JuHDwTmYa4aQEMq57ScNFBAEfrxKb8S3VHwADWPTCQLoFR_kSYHuccux6aWAkiu64LVofNtMPF/pub?gid=1768086579&single=true&output=csv",
+    storyboard: "https://docs.google.com/spreadsheets/d/e/2PACX-1vSOMZC4i78cLYnNw6H8L3FCTEOU9hXeE6hpDsGXHiwI02h4_GA4qtR5HoIsH4OrxSfUBBOQtTX4BIfu/pub?gid=887785015&single=true&output=csv"
+  },
+  // EDIT ME: add/remove/rename quick links for the Info tab
+  quickLinks: [
+    { label: "TROY University", url: "http://troy.edu" },
+    { label: "TROY Public Affairs", url: "http://www.troy.edu/news" },
+    { label: "TROY Athletics", url: "http://www.troytrojans.com" },
+    { label: "Sun Belt Conference", url: "http://www.sunbeltsports.org" },
+    { label: "CBS Newspath", url: "http://www.newspathnow.com" },
+    { label: "CNN Newsource", url: "https://newsource.ns.cnn.com" },
+    { label: "TrojanVision Policies", url: "https://sites.google.com/view/trojanvision-tv-policies/home" },
+    { label: "AP Newsroom", url: "https://newsroom.ap.org" },
+    { label: "Case Converter", url: "http://www.convertcase.net" },
+    { label: "Anchor Names", url: "https://sites.google.com/view/troy-trojanvision-anchor-names/home" },
+    { label: "Download a Show", url: "https://troyuniversity448-my.sharepoint.com/:f:/g/personal/trojanvision_troy_edu/EoPeVjIfypZJk89VbdXFD-4BHnfMZfly0Qypbf43g6e9_g" },
+    { label: "City of Troy", url: "http://www.troyal.gov" },
+    { label: "WP Login", url: "https://today.troy.edu/trojanvision/wp-login.php?redirect_to=https%3A%2F%2Ftoday.troy.edu%2Ftrojanvision%2Fwp-admin%2F&reauth=1" }
+  ],
+  refreshMinutes: 5
+};
+/* ======================================================================
+   Everything below this line is rendering logic — you shouldn't need to
+   touch it unless you want to change layout/behavior.
+====================================================================== */
+
+const DAY_NAMES = ["SUN","MON","TUES","WED","THURS","FRI","SAT"];
+const DAY_FULL  = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+
+/* ---------- tiny CSV parser (handles quoted fields) ---------- */
+function parseCSV(text){
+  const rows = [];
+  let row = [], field = "", inQuotes = false;
+  for (let i=0;i<text.length;i++){
+    const c = text[i], n = text[i+1];
+    if (inQuotes){
+      if (c === '"' && n === '"'){ field+='"'; i++; }
+      else if (c === '"'){ inQuotes = false; }
+      else field += c;
+    } else {
+      if (c === '"'){ inQuotes = true; }
+      else if (c === ','){ row.push(field); field=""; }
+      else if (c === '\r'){ /* skip */ }
+      else if (c === '\n'){ row.push(field); rows.push(row); row=[]; field=""; }
+      else field += c;
+    }
+  }
+  if (field.length || row.length){ row.push(field); rows.push(row); }
+  return rows.map(r => r.map(c => c.trim()));
+}
+
+function isBlankRow(r){ return r.every(c => c.trim() === ""); }
+
+// Google's "publish to web" CSV link redirects to a googleusercontent.com
+// domain that does NOT send an Access-Control-Allow-Origin header, so a
+// browser blocks it (even though clicking the link works fine — that's a
+// plain navigation, not a script-level fetch). We try the direct link,
+// then walk through several CORS-friendly relay services until one works.
+const PROXY_STRATEGIES = [
+  (u) => u, // direct — sometimes fine depending on host/network
+  (u) => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u),
+  (u) => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(u),
+  (u) => "https://corsproxy.io/?url=" + encodeURIComponent(u),
+  (u) => "https://thingproxy.freeboard.io/fetch/" + u
+];
+
+function fetchWithTimeout(url, ms){
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  return fetch(url, { cache: "no-store", signal: controller.signal })
+    .finally(() => clearTimeout(timer));
+}
+
+function looksLikeCSV(text){
+  if (!text || !text.trim()) return false;
+  const head = text.trim().slice(0, 15).toLowerCase();
+  if (head.startsWith("<!doctype") || head.startsWith("<html")) return false; // login/error page
+  return true;
+}
+
+async function fetchCSV(url){
+  const bust = url + (url.includes("?") ? "&" : "?") + "_t=" + Date.now();
+  let lastErr = null;
+  for (const strategy of PROXY_STRATEGIES){
+    try {
+      const attemptUrl = strategy(bust);
+      const res = await fetchWithTimeout(attemptUrl, 8000);
+      if (!res.ok) { lastErr = new Error("HTTP " + res.status); continue; }
+      const text = await res.text();
+      if (!looksLikeCSV(text)) { lastErr = new Error("unexpected response"); continue; }
+      return parseCSV(text);
+    } catch (err){
+      lastErr = err;
+    }
+  }
+  throw new Error("Could not load sheet — " + (lastErr ? lastErr.message : "all sources failed"));
+}
+
+/* ---------- Anchor schedule: multi-block parser ---------- */
+function parseAnchorSheet(rows){
+  // drop fully-blank trailing rows
+  while (rows.length && isBlankRow(rows[rows.length-1])) rows.pop();
+
+  let weekLabel = "";
+  let i = 0;
+  // first row is usually a week/date label, not a data block
+  if (rows.length && rows[0].filter(c=>c).length <= 2 && !DAY_NAMES.includes((rows[0][1]||"").toUpperCase())){
+    weekLabel = rows[0][0] || "";
+    i = 1;
+  }
+
+  // group into blocks split by blank rows
+  const blocks = [];
+  let current = [];
+  for (; i < rows.length; i++){
+    if (isBlankRow(rows[i])){
+      if (current.length) blocks.push(current);
+      current = [];
+    } else {
+      current.push(rows[i]);
+    }
+  }
+  if (current.length) blocks.push(current);
+
+  const sections = [];
+  const notes = [];
+  let lastSection = null;
+
+  for (const block of blocks){
+    const head = block[0];
+    const headDays = head.slice(1).map(d => d.toUpperCase());
+    const looksLikeHeader = headDays.some(d => DAY_NAMES.includes(d)) && block.length > 1;
+
+    if (looksLikeHeader){
+      const days = head.slice(1).filter(d => d.trim() !== "");
+      const dataRows = [];
+      block.slice(1).forEach(r => {
+        const values = r.slice(1, 1+days.length);
+        const allEmpty = values.every(v => v.trim() === "");
+        const looksLikeSentence = (r[0] || "").trim().split(/\s+/).length > 3;
+        if (allEmpty && looksLikeSentence){
+          notes.push(r[0]);
+        } else {
+          dataRows.push({ label: r[0], values });
+        }
+      });
+      const section = { title: head[0] || "Schedule", days, rows: dataRows };
+      sections.push(section);
+      lastSection = section;
+    } else if (block.length === 1) {
+      const r = block[0];
+      const hasValues = r.slice(1).some(c => c.trim() !== "");
+      if (hasValues && lastSection){
+        // a trailing single row (e.g. "Director,...") belongs to the last section
+        lastSection.rows.push({ label: r[0], values: r.slice(1, 1+lastSection.days.length) });
+      } else if (r[0] && r[0].trim() !== ""){
+        notes.push(r[0]);
+      }
+    } else {
+      // multi-row block with no recognizable day header — render as its own generic section
+      sections.push({
+        title: head[0] || "Schedule",
+        days: head.slice(1).filter(d=>d.trim()!==""),
+        rows: block.slice(1).map(r => ({ label: r[0], values: r.slice(1) }))
+      });
+    }
+  }
+
+  return { weekLabel, sections, notes };
+}
+
+/* ---------- Storyboard sheet: a grid with one column per weekday
+   (plus a trailing "Efforting" column for stories with no confirmed day).
+   Stories run down each column in row-pairs: a title row, then a "-Reporter"
+   credit row directly below it, repeated as far down as any column has
+   entries. A later "AIR DATES/TYPES" row marks a separate section we don't
+   try to re-map to days — we just carry it along as flat text. ---------- */
+function parseStoryboardSheet(rows){
+  while (rows.length && isBlankRow(rows[rows.length-1])) rows.pop();
+
+  let headerIdx = -1;
+  for (let i=0;i<rows.length;i++){
+    const matches = rows[i].filter(c => DAY_NAMES.some(d => c.trim().toUpperCase().startsWith(d))).length;
+    if (matches >= 3){ headerIdx = i; break; }
+  }
+  if (headerIdx === -1) return { columns: [], extra: [] };
+
+  const headerRow = rows[headerIdx];
+  const columns = headerRow.map(cell => {
+    const raw = cell.trim();
+    const dayMatch = DAY_NAMES.find(d => raw.toUpperCase().startsWith(d));
+    if (dayMatch){
+      const dateMatch = raw.match(/\(([^)]+)\)/);
+      return { key: dayMatch, label: DAY_FULL[DAY_NAMES.indexOf(dayMatch)], date: dateMatch ? dateMatch[1] : "", isDay: true, items: [] };
+    }
+    return { key: raw || null, label: raw.replace(/:\s*$/,"").trim(), date: "", isDay: false, items: [] };
+  });
+
+  let i = headerIdx + 1;
+  while (i < rows.length && isBlankRow(rows[i])) i++;
+
+  const extra = [];
+  while (i < rows.length){
+    const row = rows[i];
+    const nonEmpty = row.map((c,idx)=>({c:c.trim(),idx})).filter(x=>x.c!=="");
+    // a lone, all-caps, first-column cell marks a new section (e.g. "AIR DATES/TYPES") — stop the day grid there
+    if (nonEmpty.length === 1 && nonEmpty[0].idx === 0 && /^[A-Z0-9 /]+$/.test(nonEmpty[0].c) && nonEmpty[0].c.length > 3){
+      i++;
+      while (i < rows.length){
+        rows[i].forEach(c => { if (c.trim()) extra.push(c.trim()); });
+        i++;
+      }
+      break;
+    }
+    const titleRow = row;
+    const creditRow = rows[i+1] || [];
+    columns.forEach((col, ci) => {
+      const title = (titleRow[ci]||"").trim();
+      if (!title) return;
+      const creditCell = (creditRow[ci]||"").trim();
+      const credits = creditCell ? creditCell.split(/\/|,/).map(s=>s.replace(/^-+\s*/,"").trim()).filter(Boolean) : [];
+      col.items.push({ story: title, credits });
+    });
+    i += 2;
+  }
+
+  return { columns, extra };
+}
+
+/* ---------- Deadlines sheet: same "title row, then -Reporter row" pattern
+   as the storyboard, but flat (no per-day columns) — just one running list. ---------- */
+function parseDeadlinesSheet(rows){
+  while (rows.length && isBlankRow(rows[rows.length-1])) rows.pop();
+  let label = "";
+  const items = [];
+  let i = 0;
+  while (i < rows.length){
+    const row = rows[i];
+    if (isBlankRow(row)){ i++; continue; }
+    const next = rows[i+1] || [];
+    const nonEmptyNext = next.filter(c => c.trim() !== "");
+    const nextLooksLikeCredits = nonEmptyNext.length > 0 && nonEmptyNext.every(c => c.trim().startsWith("-"));
+    if (nextLooksLikeCredits){
+      row.forEach((cell, ci) => {
+        const title = cell.trim();
+        if (!title) return;
+        const creditCell = (next[ci] || "").trim();
+        const credits = creditCell ? creditCell.split(/\/|,/).map(s => s.replace(/^-+\s*/, "").trim()).filter(Boolean) : [];
+        items.push({ story: title, credits });
+      });
+      i += 2;
+    } else {
+      if (!label){ label = row.find(c => c.trim() !== "") || ""; }
+      i++;
+    }
+  }
+  return { label, items };
+}
+
+/* ============================== RENDER ============================== */
+
+function todayIdx(){ return new Date().getDay(); } // 0=Sun..6=Sat
+
+function el(tag, attrs={}, children=[]){
+  const e = document.createElement(tag);
+  for (const [k,v] of Object.entries(attrs)){
+    if (k === "class") e.className = v;
+    else if (k === "html") e.innerHTML = v;
+    else e.setAttribute(k, v);
+  }
+  (Array.isArray(children)?children:[children]).forEach(c => {
+    if (c == null || c === false) return; // skip null/undefined/false (conditional children)
+    if (c instanceof Node) e.appendChild(c);
+    else e.appendChild(document.createTextNode(String(c))); // coerce stray numbers/etc instead of throwing
+  });
+  return e;
+}
+
+// Absolute last line of defense: no matter what a render function throws,
+// this always returns a real, appendable DOM node — built with raw DOM
+// calls only (no dependency on el()) so it cannot itself fail the same way.
+function safeRender(fn, fallbackLabel){
+  try {
+    const node = fn();
+    if (node instanceof Node) return node;
+    throw new Error("render function did not return a DOM node");
+  } catch (err){
+    const div = document.createElement("div");
+    div.className = "panel";
+    const msg = document.createElement("div");
+    msg.className = "state-msg error";
+    msg.textContent = "Something went wrong displaying " + fallbackLabel + " (" + (err && err.message ? err.message : "unknown error") + "). Try refreshing.";
+    div.appendChild(msg);
+    return div;
+  }
+}
+
+function renderApp(){
+  const app = document.getElementById("app");
+  app.innerHTML = "";
+
+  if (CONFIG.bannerUrl){
+    const banner = el("img", {
+      class: "site-banner",
+      src: CONFIG.bannerUrl,
+      alt: CONFIG.stationName + " banner"
+    });
+    banner.addEventListener("error", () => banner.remove()); // fail quietly if the image 404s
+    app.appendChild(banner);
+  }
+
+  app.appendChild(renderHeader());
+  const nav = renderNav();
+  app.appendChild(nav);
+
+  const main = el("main", { class: "content" });
+  app.appendChild(main);
+
+  const panels = {
+    info: safeRender(() => renderInfoPanel(null), "info"),
+    anchors: renderLoadingPanel("anchor schedule"),
+    deadlines: renderLoadingPanel("blog posts"),
+    storyboard: renderLoadingPanel("storyboard")
+  };
+
+  let activeTab = "info";
+  function showTab(tab){
+    activeTab = tab;
+    main.innerHTML = "";
+    main.appendChild(panels[tab]);
+    nav.querySelectorAll(".navtab").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
+    window.scrollTo({top:0, behavior:"instant" in window ? "instant" : "auto"});
+  }
+  nav.querySelectorAll(".navtab").forEach(btn => {
+    btn.addEventListener("click", () => showTab(btn.dataset.tab));
+  });
+  showTab("info");
+
+  loadAnchors(panels, () => activeTab, main);
+  loadDeadlines(panels, () => activeTab, main);
+  loadStoryboard(panels, () => activeTab, main);
+
+  if (CONFIG.refreshMinutes > 0){
+    setInterval(() => {
+      loadAnchors(panels, () => activeTab, main, true);
+      loadDeadlines(panels, () => activeTab, main, true);
+      loadStoryboard(panels, () => activeTab, main, true);
+    }, CONFIG.refreshMinutes * 60 * 1000);
+  }
+}
+
+function renderHeader(){
+  const now = new Date();
+  const header = el("header", { class: "topbar" });
+
+  const bug = el("div", { class: "bug" });
+  if (CONFIG.logoUrl){
+    const logo = el("img", { class: "bug-logo", src: CONFIG.logoUrl, alt: CONFIG.stationName + " logo" });
+    logo.addEventListener("error", () => { // fall back to text if the image 404s
+      logo.remove();
+      bug.appendChild(document.createTextNode("TVT"));
+    });
+    bug.appendChild(logo);
+  } else {
+    bug.appendChild(document.createTextNode("TVT"));
+  }
+
+  const brand = el("div", { class: "brand" }, [
+    bug,
+    el("div", { class: "brand-text" }, [
+      el("div", { class: "brand-name" }, CONFIG.stationName),
+      el("div", { class: "brand-tag" }, CONFIG.tagline)
+    ])
+  ]);
+
+  const clockWrap = el("div", { class: "clockwrap" });
+  const dot = el("span", { class: "live-dot" });
+  const clock = el("span", { class: "clock" });
+  clockWrap.appendChild(dot);
+  clockWrap.appendChild(clock);
+
+  function tick(){
+    const d = new Date();
+    const h = d.getHours(), m = d.getMinutes();
+    const onAir = (h===11 && m>=20 && m<=45) || (h===16 && m<=15) || (h===17 && m<=15);
+    dot.classList.toggle("on", onAir);
+    clock.textContent = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) +
+      "  ·  " + DAY_FULL[d.getDay()];
+  }
+  tick();
+  setInterval(tick, 15000);
+
+  header.appendChild(brand);
+  header.appendChild(clockWrap);
+  return header;
+}
+
+function renderNav(){
+  const tabs = [
+    { id: "info", label: "Home" },
+    { id: "anchors", label: "Schedule" },
+    { id: "storyboard", label: "Storyboard" },
+    { id: "deadlines", label: "Blog Posts" }
+  ];
+  const nav = el("nav", { class: "rundown-nav" });
+  tabs.forEach(t => {
+    nav.appendChild(el("button", { class: "navtab", "data-tab": t.id }, [
+      el("span", { class: "navtab-label" }, t.label)
+    ]));
+  });
+  return nav;
+}
+
+function renderInfoPanel(anchorData, anchorErr){
+  const wrap = el("div", { class: "panel" });
+
+  /* Quick Links — rendered twice (grid for desktop, list for phone/tablet).
+     CSS shows exactly one depending on viewport width; see .links-grid-card
+     and .links-list-card below. Same data, two layouts. */
+  const linksGridCard = el("div", { class: "card links-grid-card" }, [
+    el("h2", { class: "card-title" }, "Quick Links"),
+    el("div", { class: "links-grid" },
+      CONFIG.quickLinks.map(l => el("a", { class: "link-btn", href: l.url, target: "_blank", rel: "noopener" }, l.label))
+    )
+  ]);
+
+  const linksListCard = el("div", { class: "card links-list-card" }, [
+    el("h2", { class: "card-title" }, "Quick Links"),
+    el("div", { class: "links-list" },
+      CONFIG.quickLinks.map(l => el("a", { class: "link-row", href: l.url, target: "_blank", rel: "noopener" }, [
+        el("span", { class: "link-label" }, l.label),
+        l.note ? el("span", { class: "link-note" }, l.note) : null
+      ]))
+    )
+  ]);
+
+  /* Today's Lineup — pulled live from the anchor schedule sheet */
+  const todayName = DAY_NAMES[todayIdx()];
+  const lineupCard = el("div", { class: "card lineup-card" }, [
+    el("h2", { class: "card-title" }, "Today's Lineup — " + DAY_FULL[todayIdx()])
+  ]);
+
+  if (!anchorData && !anchorErr){
+    lineupCard.appendChild(el("div", { class: "state-msg" }, "Loading…"));
+  } else if (anchorErr){
+    lineupCard.appendChild(el("div", { class: "state-msg error" }, "Couldn't load today's lineup — check the Anchors tab."));
+  } else {
+    const isWeekend = !DAY_NAMES.slice(1,6).includes(todayName);
+    if (isWeekend || !anchorData.sections.length){
+      lineupCard.appendChild(el("div", { class: "state-msg" }, "No newscasts scheduled today."));
+    } else {
+      anchorData.sections.forEach(section => {
+        const di = section.days.findIndex(d => d.toUpperCase() === todayName);
+        if (di === -1) return;
+        const sub = el("div", { class: "lineup-section" });
+        sub.appendChild(el("div", { class: "lineup-section-title" }, section.title));
+        section.rows.forEach(r => {
+          const val = r.values[di] || "";
+          sub.appendChild(el("div", { class: "role-row" }, [
+            el("span", { class: "role-label" }, r.label || ""),
+            el("span", { class: "role-value" }, val && val !== "-" ? val : "—")
+          ]));
+        });
+        lineupCard.appendChild(sub);
+      });
+    }
+  }
+
+  wrap.appendChild(linksGridCard);
+  wrap.appendChild(lineupCard);
+  wrap.appendChild(linksListCard);
+  return wrap;
+}
+
+function renderLoadingPanel(name){
+  return el("div", { class: "panel" }, el("div", { class: "state-msg" }, "Loading " + name + "…"));
+}
+
+function renderErrorPanel(name, url, err){
+  return el("div", { class: "panel" }, el("div", { class: "state-msg error" }, [
+    el("p", {}, "Couldn't load the " + name + " automatically (" + (err && err.message ? err.message : "network error") + ")."),
+    el("p", {}, ["You can still open the sheet directly: ", el("a", { href: url, target: "_blank", rel: "noopener" }, "open sheet ↗")])
+  ]));
+}
+
+function dayShort(d){ return d.length > 4 ? d.slice(0,4) : d; }
+
+function renderAnchorPanel(data){
+  const wrap = el("div", { class: "panel" });
+  const todayName = DAY_NAMES[todayIdx()];
+
+  if (data.weekLabel){
+    wrap.appendChild(el("div", { class: "week-label" }, "WEEK OF " + data.weekLabel));
+  }
+
+  data.sections.forEach(section => {
+    const sec = el("section", { class: "sched-section" });
+    sec.appendChild(el("h2", { class: "sched-title" }, section.title));
+
+    const grid = el("div", { class: "day-grid" });
+    grid.style.setProperty("--daycount", Math.max(section.days.length,1));
+
+    section.days.forEach((day, di) => {
+      const isToday = day.toUpperCase() === todayName;
+      const card = el("div", { class: "day-card" + (isToday ? " today" : "") });
+      card.appendChild(el("div", { class: "day-card-head" }, day));
+      section.rows.forEach(r => {
+        const val = r.values[di] || "";
+        card.appendChild(el("div", { class: "role-row" }, [
+          el("span", { class: "role-label" }, r.label || ""),
+          el("span", { class: "role-value" }, val && val !== "-" ? val : "—")
+        ]));
+      });
+      grid.appendChild(card);
+    });
+
+    sec.appendChild(grid);
+    wrap.appendChild(sec);
+  });
+
+  if (data.notes.length){
+    data.notes.forEach(n => wrap.appendChild(el("div", { class: "note" }, "★ " + n)));
+  }
+
+  return wrap;
+}
+
+function renderStoryboardPanel(data){
+  const wrap = el("div", { class: "panel" });
+  const columns = (data && data.columns) || [];
+
+  if (!columns.length){
+    wrap.appendChild(el("div", { class: "state-msg" }, "No stories on the board yet."));
+    return wrap;
+  }
+
+  const searchWrap = el("div", { class: "search-wrap" });
+  const search = el("input", { class: "search-box", type: "text", placeholder: "Search storyboard…" });
+  searchWrap.appendChild(search);
+  wrap.appendChild(searchWrap);
+
+  const list = el("div", { class: "row-list" });
+  wrap.appendChild(list);
+
+  const todayName = DAY_NAMES[todayIdx()];
+
+  function draw(filter){
+    list.innerHTML = "";
+    const f = (filter||"").toLowerCase();
+    let anyShown = false;
+
+    columns.forEach(col => {
+      const items = col.items.filter(it => !f || it.story.toLowerCase().includes(f) || it.credits.some(c => c.toLowerCase().includes(f)));
+      if (f && !items.length) return; // while actively searching, hide days with no matches
+      anyShown = true;
+
+      const isToday = col.isDay && col.key === todayName;
+      const section = el("div", { class: "day-section" + (isToday ? " today" : "") });
+      const headingText = col.label + (col.date ? " (" + col.date + ")" : "");
+      section.appendChild(el("div", { class: "day-section-title" }, headingText));
+
+      if (!items.length){
+        section.appendChild(el("div", { class: "state-msg" }, "No stories yet."));
+      } else {
+        items.forEach(it => {
+          const card = el("div", { class: "row-card story-card" });
+          card.appendChild(el("div", { class: "row-primary" }, it.story));
+          if (it.credits.length){
+            const credits = el("div", { class: "story-credits" });
+            it.credits.forEach(c => credits.appendChild(el("span", { class: "credit-chip" }, c)));
+            card.appendChild(credits);
+          }
+          section.appendChild(card);
+        });
+      }
+      list.appendChild(section);
+    });
+
+    if (!anyShown) list.appendChild(el("div", { class: "state-msg" }, "No matches."));
+  }
+  search.addEventListener("input", () => draw(search.value));
+  draw("");
+  return wrap;
+}
+
+function renderDeadlinesPanel(data){
+  const wrap = el("div", { class: "panel" });
+
+  if (!data.items.length){
+    wrap.appendChild(el("div", { class: "state-msg" }, "Nothing posted yet."));
+    return wrap;
+  }
+
+  const searchWrap = el("div", { class: "search-wrap" });
+  const search = el("input", { class: "search-box", type: "text", placeholder: "Search blog posts…" });
+  searchWrap.appendChild(search);
+  wrap.appendChild(searchWrap);
+
+  const list = el("div", { class: "row-list" });
+  wrap.appendChild(list);
+
+  function draw(filter){
+    list.innerHTML = "";
+    const f = (filter||"").toLowerCase();
+    const items = data.items.filter(it => !f || it.story.toLowerCase().includes(f) || it.credits.some(c => c.toLowerCase().includes(f)));
+    items.forEach(it => {
+      const card = el("div", { class: "row-card story-card" });
+      card.appendChild(el("div", { class: "row-primary" }, it.story));
+      if (it.credits.length){
+        const credits = el("div", { class: "story-credits" });
+        it.credits.forEach(c => credits.appendChild(el("span", { class: "credit-chip" }, c)));
+        card.appendChild(credits);
+      }
+      list.appendChild(card);
+    });
+    if (!list.children.length){
+      list.appendChild(el("div", { class: "state-msg" }, "No matches."));
+    }
+  }
+  search.addEventListener("input", () => draw(search.value));
+  draw("");
+
+  return wrap;
+}
+
+/* ---------- loaders ---------- */
+async function loadAnchors(panels, getActive, main, silent){
+  try {
+    const rows = await fetchCSV(CONFIG.sheets.anchors);
+    const data = parseAnchorSheet(rows);
+    panels.anchors = safeRender(() => renderAnchorPanel(data), "the anchor schedule");
+    panels.info = safeRender(() => renderInfoPanel(data), "today's lineup"); // Info tab's "Today's Lineup" depends on this
+  } catch (err){
+    panels.anchors = renderErrorPanel("anchor schedule", CONFIG.sheets.anchors, err);
+    panels.info = safeRender(() => renderInfoPanel(null, err), "today's lineup");
+  }
+  const active = getActive();
+  if (active === "anchors" || active === "info"){
+    main.innerHTML="";
+    main.appendChild(panels[active]);
+  }
+}
+
+async function loadDeadlines(panels, getActive, main, silent){
+  try {
+    const rows = await fetchCSV(CONFIG.sheets.deadlines);
+    const data = parseDeadlinesSheet(rows);
+    panels.deadlines = safeRender(() => renderDeadlinesPanel(data), "blog posts");
+  } catch (err){
+    panels.deadlines = renderErrorPanel("blog posts", CONFIG.sheets.deadlines, err);
+  }
+  if (getActive() === "deadlines"){ main.innerHTML=""; main.appendChild(panels.deadlines); }
+}
+
+async function loadStoryboard(panels, getActive, main, silent){
+  try {
+    const rows = await fetchCSV(CONFIG.sheets.storyboard);
+    const items = parseStoryboardSheet(rows);
+    panels.storyboard = safeRender(() => renderStoryboardPanel(items), "the storyboard");
+  } catch (err){
+    panels.storyboard = renderErrorPanel("storyboard", CONFIG.sheets.storyboard, err);
+  }
+  if (getActive() === "storyboard"){ main.innerHTML=""; main.appendChild(panels.storyboard); }
+}
+
+try {
+  renderApp();
+} catch (err){
+  document.getElementById("app").innerHTML =
+    '<div style="padding:24px;color:#f1efe3;font-family:sans-serif;">' +
+    'Something went wrong starting the page: ' + (err && err.message ? err.message : String(err)) +
+    '<br><br>Try refreshing.</div>';
+}
+</script>
+
+<style>
+:root{
+  /* ---- official palette ---- */
+  --black: #000000;
+  --dark-cardinal: #720724;
+  --cardinal: #910039;
+  --wheat: #efd19f;
+  --sand: #f1efe3;
+  --grey: #999999;
+
+  /* ---- derived tokens: DARK theme (default) ---- */
+  --bg: var(--black);
+  --panel: #170710;       /* black + a whisper of dark cardinal */
+  --panel-2: #220a12;     /* one step lighter, for headers within cards */
+  --line: #3d1220;        /* dark-cardinal-tinted hairline */
+  --text: var(--sand);
+  --text-dim: var(--grey);
+  --red: var(--cardinal);
+  --red-bright: var(--cardinal);
+  --steel: var(--grey);
+  --gold: var(--wheat);        /* decorative glow (on-air dot) — stays wheat in both themes */
+  --accent-soft: var(--wheat); /* text-role accent (labels, chips) — swaps per theme for contrast */
+  --error-text: #E4A2AA;
+  --radius: 10px;
+  color-scheme: dark light;
+}
+
+/* ---- LIGHT theme: follows the device's system setting automatically ---- */
+@media (prefers-color-scheme: light){
+  :root{
+    --bg: var(--sand);
+    --panel: #ffffff;
+    --panel-2: #faf3e6;      /* soft wheat tint for sub-headers within cards */
+    --line: #e3d7c2;
+    --text: #201014;         /* near-black with a hint of warmth, easier on the eye than pure black */
+    --text-dim: #6f6f6f;     /* darkened from brand grey so it still passes contrast on white */
+    --red: var(--cardinal);
+    --red-bright: var(--cardinal);
+    --steel: #6f6f6f;
+    --accent-soft: var(--dark-cardinal); /* wheat text is unreadable on white — swap to dark cardinal */
+    --error-text: var(--cardinal);
+  }
+}
+*{ box-sizing: border-box; }
+html,body{ margin:0; padding:0; background:var(--bg); color:var(--text); }
+body{
+  font-family: 'Inter', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+#app{ min-height:100vh; display:flex; flex-direction:column; }
+.boot{ display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100vh; gap:12px; }
+.boot-mark{ font-family:'Oswald',sans-serif; font-weight:700; font-size:2rem; letter-spacing:0.08em; color:var(--red-bright); }
+.boot-text{ font-family:'IBM Plex Mono',monospace; font-size:0.75rem; color:var(--text-dim); letter-spacing:0.1em; }
+
+a{ color:inherit; }
+
+/* ---- top bar ---- */
+.site-banner{
+  display:block; width:100%; height:auto; max-height:220px; object-fit:cover;
+}
+
+.topbar{
+  position: sticky; top:0; z-index:20;
+  display:flex; align-items:center; justify-content:space-between;
+  padding: 10px 16px;
+  background: var(--panel);
+  border-bottom: 3px solid var(--red);
+}
+.brand{ display:flex; align-items:center; gap:10px; min-width:0; }
+.bug{
+  font-family:'Oswald',sans-serif; font-weight:700; font-size:1.1rem;
+  background: var(--red); color:#fff; padding:4px 8px; border-radius:4px; letter-spacing:0.05em;
+  flex-shrink:0;
+  display:flex; align-items:center; justify-content:center;
+}
+.bug-logo{ display:block; height:22px; width:auto; }
+.brand-text{ min-width:0; }
+.brand-name{ font-family:'Oswald',sans-serif; font-weight:600; font-size:0.95rem; letter-spacing:0.04em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.brand-tag{ font-size:0.7rem; color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.clockwrap{ display:flex; align-items:center; gap:6px; font-family:'IBM Plex Mono',monospace; font-size:0.75rem; color:var(--text-dim); flex-shrink:0; }
+.live-dot{ width:8px; height:8px; border-radius:50%; background:#4A4E57; display:inline-block; }
+.live-dot.on{ background:var(--gold); box-shadow:0 0 8px var(--gold); animation:pulse 1.4s infinite; }
+@keyframes pulse{ 0%,100%{opacity:1;} 50%{opacity:0.4;} }
+
+/* ---- rundown nav ---- */
+/* Desktop/tablet-landscape default: sticky along the top, under the topbar. */
+.rundown-nav{
+  position: sticky; top:53px; z-index:19;
+  display:flex; overflow-x:auto;
+  background: var(--panel-2);
+  border-bottom:1px solid var(--line);
+}
+.navtab{
+  flex:1 1 0; min-width:88px;
+  display:flex; flex-direction:column; align-items:center; gap:2px;
+  padding:10px 6px 9px;
+  background:transparent; border:none; border-bottom:3px solid transparent;
+  color:var(--text-dim); cursor:pointer;
+  font-family:'Oswald',sans-serif;
+}
+.navtab-label{ font-size:0.8rem; font-weight:500; letter-spacing:0.03em; text-transform:uppercase; }
+.navtab.active{ color:var(--text); border-bottom-color:var(--red-bright); }
+.navtab:hover{ color:var(--text); }
+
+/* Phone & tablet (portrait AND landscape): nav moves to a fixed bottom bar,
+   thumb-reachable, like a native app. This is a pure CSS breakpoint, so a
+   mobile browser's "Request Desktop Site" naturally reverts to the desktop
+   layout above — desktop mode reports a wider viewport, which no longer
+   matches this query. Nothing to detect in JS. */
+@media (max-width: 1024px){
+  .rundown-nav{
+    position: fixed; top:auto; bottom:0; left:0; right:0; z-index:30;
+    border-bottom:none; border-top:1px solid var(--line);
+    box-shadow: 0 -4px 14px rgba(0,0,0,0.35);
+    padding-bottom: env(safe-area-inset-bottom, 0px); /* clears the home-indicator on notched phones */
+  }
+  .content{ padding-bottom: 92px; } /* keeps content from hiding behind the fixed bar */
+}
+
+/* ---- content ---- */
+.content{ flex:1; padding: 16px; max-width: 980px; margin:0 auto; width:100%; }
+.panel{ display:flex; flex-direction:column; gap:16px; }
+
+.card{ background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:14px 16px; }
+.card-title{
+  font-family:'Oswald',sans-serif; font-size:0.85rem; font-weight:600; letter-spacing:0.08em;
+  text-transform:uppercase; color:var(--steel); margin:0 0 10px;
+}
+
+.lineup-card{ border-color: var(--dark-cardinal); }
+.lineup-section{ margin-bottom:10px; }
+.lineup-section:last-child{ margin-bottom:0; }
+.lineup-section-title{
+  font-family:'Oswald',sans-serif; font-size:0.72rem; font-weight:600; letter-spacing:0.08em;
+  text-transform:uppercase; color:var(--accent-soft); margin-bottom:4px;
+}
+
+/* Quick Links — desktop grid (buttons, up to 6 per row) shown above the fold;
+   phone/tablet list (stacked rows) shown lower down, in its original spot.
+   Same breakpoint as the nav bar so "desktop" means the same thing everywhere. */
+.links-grid-card{ display:none; }
+.links-grid{
+  display:grid; grid-template-columns: repeat(6, 1fr); gap:10px;
+}
+.link-btn{
+  display:flex; align-items:center; justify-content:center; text-align:center;
+  padding:12px 10px; min-height:52px;
+  background:var(--panel-2); border:1px solid var(--line); border-radius:8px;
+  color:var(--text); text-decoration:none; font-size:0.85rem; font-weight:500;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.link-btn:hover{ border-color:var(--red); background:var(--panel); }
+
+.links-list-card{ }
+.links-list{ display:flex; flex-direction:column; }
+.link-row{
+  display:flex; justify-content:space-between; align-items:center; gap:10px;
+  padding:10px 4px; border-bottom:1px solid var(--line); text-decoration:none;
+}
+.link-row:last-child{ border-bottom:none; }
+.link-label{ font-weight:500; font-size:0.92rem; }
+.link-note{ font-size:0.78rem; color:var(--text-dim); text-align:right; }
+
+@media (min-width: 1025px){
+  .links-grid-card{ display:block; }
+  .links-list-card{ display:none; }
+}
+
+/* ---- anchor schedule ---- */
+.week-label{
+  font-family:'IBM Plex Mono',monospace; font-size:0.75rem; letter-spacing:0.1em;
+  color:var(--steel); text-transform:uppercase;
+}
+.sched-section{ display:flex; flex-direction:column; gap:10px; }
+.sched-title{
+  font-family:'Oswald',sans-serif; font-size:1.05rem; font-weight:600; letter-spacing:0.03em;
+  margin:0; padding-bottom:6px; border-bottom:2px solid var(--line);
+}
+.day-grid{
+  display:grid; grid-template-columns: repeat(var(--daycount,5), 1fr); gap:8px;
+}
+@media (max-width:700px){ .day-grid{ grid-template-columns:1fr 1fr; } }
+@media (max-width:440px){ .day-grid{ grid-template-columns:1fr; } }
+
+.day-card{ background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; }
+.day-card.today{ border-color:var(--red); box-shadow:0 0 0 1px var(--red); }
+.day-card-head{
+  font-family:'Oswald',sans-serif; font-size:0.78rem; font-weight:600; letter-spacing:0.1em;
+  text-align:center; padding:6px 4px; background:var(--panel-2); color:var(--text-dim);
+}
+.day-card.today .day-card-head{ background:var(--red); color:#fff; }
+.role-row{ display:flex; justify-content:space-between; gap:8px; padding:7px 10px; border-top:1px solid var(--line); font-size:0.82rem; }
+.role-label{ color:var(--text-dim); }
+.role-value{ font-weight:500; text-align:right; }
+
+.note{ font-size:0.82rem; color:var(--steel); background:var(--panel-2); border-left:3px solid var(--red); padding:8px 12px; border-radius:4px; }
+
+/* ---- generic sheet panels (deadlines / storyboard) ---- */
+.search-wrap{ position:sticky; top:97px; z-index:5; background:var(--bg); padding:2px 0 4px; }
+@media (max-width: 1024px){
+  /* nav is now a bottom bar, so the search box only needs to clear the topbar */
+  .search-wrap{ top:53px; }
+}
+.search-box{
+  width:100%; padding:10px 12px; border-radius:8px; border:1px solid var(--line);
+  background:var(--panel); color:var(--text); font-family:'Inter',sans-serif; font-size:0.9rem;
+}
+.search-box::placeholder{ color:var(--text-dim); }
+.row-list{ display:flex; flex-direction:column; gap:8px; }
+.row-card{ background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:12px 14px; }
+.row-primary{ font-family:'Oswald',sans-serif; font-weight:600; font-size:0.98rem; margin-bottom:6px; }
+.row-details{ display:flex; flex-direction:column; gap:3px; }
+.row-field{ display:flex; gap:6px; font-size:0.82rem; flex-wrap:wrap; }
+.rf-label{ color:var(--text-dim); }
+.rf-value{ color:var(--text); }
+
+.story-credits{ display:flex; flex-wrap:wrap; gap:6px; margin-top:2px; }
+.credit-chip{
+  font-size:0.75rem; font-family:'IBM Plex Mono',monospace; color:var(--accent-soft);
+  background:var(--panel-2); border:1px solid var(--line); border-radius:20px; padding:3px 10px;
+}
+
+.day-section{ display:flex; flex-direction:column; gap:8px; }
+.day-section:not(:first-child){ margin-top:10px; }
+.day-section-title{
+  font-family:'Oswald',sans-serif; font-size:1rem; font-weight:600; letter-spacing:0.03em;
+  text-transform:uppercase; margin:0; padding-bottom:6px; border-bottom:2px solid var(--line);
+  color:var(--text);
+}
+.day-section.today .day-section-title{ color:var(--red-bright); border-bottom-color:var(--red); }
+
+.state-msg{ color:var(--text-dim); font-size:0.9rem; padding:20px 4px; text-align:center; }
+.state-msg.error{ color:var(--error-text); text-align:left; }
+.state-msg a{ color:var(--red-bright); }
+
+::selection{ background:var(--red); color:#fff; }
+</style>
+</body>
+</html>
